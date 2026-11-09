@@ -37,7 +37,9 @@ def menu_export(self, context):
 
 
 def _detect_game_vehicles_dir():
-    """BeamNG.drive content/vehicles — Steam default locations."""
+    """BeamNG.drive content/vehicles — Steam default locations. Local
+    filesystem checks only; nothing is read beyond a directory-exists
+    probe and nothing leaves the machine."""
     for p in (
         os.path.expanduser(
             "~/.local/share/Steam/steamapps/common/BeamNG.drive"
@@ -48,19 +50,25 @@ def _detect_game_vehicles_dir():
         "C:/Program Files (x86)/Steam/steamapps/common/BeamNG.drive"
         "/content/vehicles",
     ):
-        if os.path.isdir(p):
-            return p
+        try:
+            if os.path.isdir(p):
+                return p
+        except OSError:
+            pass
     return ""
 
 
 def _detect_user_dir():
-    """BeamNG.drive user path (vehicles/, mods/)."""
+    """BeamNG.drive user path (vehicles/, mods/) — local probes only."""
     for p in (
         os.path.expanduser("~/Documents/BeamNG.drive"),
         os.path.expanduser("~/.local/share/BeamNG.drive"),
     ):
-        if os.path.isdir(p):
-            return p
+        try:
+            if os.path.isdir(p):
+                return p
+        except OSError:
+            pass
     return ""
 
 
