@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#334155;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Mesh gradient - orange to teal -->
+    <linearGradient id="meshGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f97316;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#14b8a6;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Import arrow gradient (orange) -->
+    <linearGradient id="importGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ea580c;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f97316;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Export arrow gradient (teal) -->
+    <linearGradient id="exportGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d9488;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#14b8a6;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bgGradient)" />
+
+  <!-- 3D Wireframe Mesh - stylized low-poly surface with depth -->
+  <g transform="translate(128, 128)" filter="url(#glow)">
+    <!-- Back/far mesh lines (darker, thinner) -->
+    <path d="
+      M -35 -55 L 35 -55
+      M -35 -55 L -60 -25
+      M 35 -55 L 60 -25
+    " fill="none" stroke="url(#meshGradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" />
+
+    <!-- Main mesh outline - car-like shape -->
+    <path d="
+      M -60 -25
+      L -35 -55
+      L 35 -55
+      L 60 -25
+      L 65 15
+      L 45 55
+      L -45 55
+      L -65 15
+      Z
+    " fill="none" stroke="url(#meshGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+
+    <!-- Internal triangulation lines -->
+    <path d="
+      M -60 -25 L 0 -10 L 60 -25
+      M -35 -55 L 0 -10 L 45 55
+      M 35 -55 L 0 -10 L -45 55
+      M -65 15 L 0 -10 L 65 15
+      M -45 55 L 45 55
+      M -60 -25 L -65 15
+      M 60 -25 L 65 15
+      M -45 55 L -65 15
+      M 45 55 L 65 15
+      M 0 -10 L 0 20
+    " fill="none" stroke="url(#meshGradient)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />
+
+    <!-- Center filled triangle for depth -->
+    <path d="
+      M -18 -8
+      L 18 -8
+      L 0 22
+      Z
+    " fill="url(#meshGradient)" opacity="0.3" />
+  </g>
+
+  <!-- Import arrow (left side, curved inward, orange) -->
+  <g transform="translate(128, 128)" filter="url(#glow)">
+    <path d="
+      M -95 0
+      A 70 70 0 0 1 -25 -65
+    " fill="none" stroke="url(#importGradient)" stroke-width="7" stroke-linecap="round" />
+    <!-- Arrowhead pointing inward -->
+    <path d="
+      M -25 -65
+      L -38 -55
+      L -20 -48
+    " fill="none" stroke="url(#importGradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Export arrow (right side, curved outward, teal) -->
+  <g transform="translate(128, 128)" filter="url(#glow)">
+    <path d="
+      M 25 65
+      A 70 70 0 0 1 95 0
+    " fill="none" stroke="url(#exportGradient)" stroke-width="7" stroke-linecap="round" />
+    <!-- Arrowhead pointing outward -->
+    <path d="
+      M 95 0
+      L 82 -10
+      L 100 0
+      L 82 10
+    " fill="none" stroke="url(#exportGradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Corner accent dots -->
+  <circle cx="40" cy="40" r="5" fill="#f97316" opacity="0.5" />
+  <circle cx="216" cy="40" r="5" fill="#14b8a6" opacity="0.5" />
+  <circle cx="40" cy="216" r="5" fill="#14b8a6" opacity="0.5" />
+  <circle cx="216" cy="216" r="5" fill="#f97316" opacity="0.5" />
+</svg>

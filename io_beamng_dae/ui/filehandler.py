@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-
 """FileHandler for DAE/CDAE drag-and-drop import support."""
 
 import bpy

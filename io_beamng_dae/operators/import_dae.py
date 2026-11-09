@@ -138,9 +138,9 @@ class ImportDAE(bpy.types.Operator, ImportHelper):
     def _import_single(self, context, filepath):
         """Import a single DAE or CDAE file."""
         try:
-            import cdae_native
+        from .. import native as cdae_native
         except ImportError:
-            self.report({"ERROR"}, "cdae_native C++ module not found. Build the native module first.")
+            self.report({"ERROR"}, "pure-Python native module missing.")
             return {"CANCELLED"}
 
         is_cdae = filepath.lower().endswith(".cdae")

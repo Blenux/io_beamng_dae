@@ -1,6 +1,6 @@
 # BeamNG DAE/CDAE Import/Export
 
-A Blender extension for importing and exporting BeamNG.drive Collada (`.dae`) and Cached Collada (`.cdae`) mesh files. Uses a C++ native module for fast parsing and writing, with numpy-vectorized Blender mesh operations.
+A Blender extension for importing and exporting BeamNG.drive Collada (`.dae`) and Cached Collada (`.cdae`) mesh files. Uses a pure-Python native module for parsing and writing, with numpy-vectorized Blender mesh operations.
 
 ## Features
 
@@ -15,16 +15,14 @@ A Blender extension for importing and exporting BeamNG.drive Collada (`.dae`) an
 ## Requirements
 
 - Blender 5.0.1 or later
-- Python 3.11 or 3.13 (matching Blender's bundled Python ABI)
-- Supported platforms: **Linux x86_64**, **Windows x86_64**
+- Python 3.11 or 3.13 (matching Blender's bundled Python)
+- `zstandard` Python package (for CDAE zstd compression)
 
 ## Installation
 
 1. Download or build the extension (see [Building](#building) below)
 2. In Blender, go to **Edit > Preferences > Extensions**
 3. Install from disk, selecting the `.zip` package or the extension folder
-
-Pre-built wheels for Linux and Windows (cp311 and cp313) are included in `wheels/`.
 
 ### Extension Repository (Recommended)
 
@@ -56,7 +54,7 @@ Download the `.zip` from [GitHub Releases](https://github.com/Blenux/io_beamng_d
 1. **File > Export > BeamNG Collada (.dae, .cdae)**
 2. Choose format: DAE (XML) or CDAE (binary)
 3. Toggle selection-only, modifiers, custom normals, UV layers, scale
-4. Export writes the file via the C++ native module
+4. Export writes the file via the pure-Python native module
 
 Drag-and-drop is also supported — drop `.dae`/`.cdae` files directly into Blender's viewport.
 
@@ -73,20 +71,18 @@ io_beamng_dae_dev/
 │   ├── core/
 │   │   ├── mesh_builder.py  # Build Blender meshes from parsed data (import)
 │   │   └── mesh_extractor.py# Extract Blender mesh data for export
+│   ├── native/              # Pure-Python native module (replaces C++ cdae_native)
+│   │   ├── __init__.py      # Module API (parse_dae, write_dae, parse_cdae, write_cdae)
+│   │   ├── dae_parser.py    # DAE XML parser (xml.etree.ElementTree)
+│   │   ├── dae_writer.py    # DAE XML writer
+│   │   ├── cdae_parser.py   # CDAE binary parser (msgpack + zstd)
+│   │   ├── cdae_writer.py   # CDAE binary writer
+│   │   ├── msgpack_reader.py # Msgpack binary reader
+│   │   └── msgpack_writer.py # Msgpack binary writer
 │   ├── ui/
 │   │   ├── import_panel.py  # Import options panel
 │   │   ├── export_panel.py  # Export options panel
 │   │   └── filehandler.py   # Drag-and-drop file handler
-│   └── wheels/              # Pre-built platform wheels
-├── native/                  # C++ native module (cdae_native) — not shipped
-│   ├── src/                 # C++ source (parser, writer, msgpack)
-│   ├── CMakeLists.txt       # CMake build config
-│   ├── pyproject.toml       # Python build config (scikit-build-core)
-│   ├── build.sh             # Linux build script
-│   ├── build.bat            # Windows build script (native)
-│   ├── build_windows.sh     # Windows cross-compile from Linux (MinGW)
-│   ├── build_macos.sh       # macOS build script (community)
-│   └── update_manifest.py   # Auto-update manifest platforms + wheels
 ├── scripts/                 # Repo-level tooling
 │   ├── package_zip.sh       # Package io_beamng_dae as zip
 │   └── create_index.sh      # Generate index.json for Blender repository
@@ -97,102 +93,19 @@ io_beamng_dae_dev/
 
 ## Building
 
-The native C++ module (`cdae_native`) must be built for your platform and Python ABI version. Build scripts are provided for each platform.
+The extension uses a pure-Python native module (`io_beamng_dae/native/`) — no C++ compilation required.
 
-### Prerequisites (all platforms)
+### Prerequisites
 
-- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — Python version manager
-- **CMake** (installed automatically by uv in the build venv)
-- **Git** (for FetchContent dependencies: pugixml, zstd)
+- **`zstandard`** Python package (for CDAE zstd compression)
 
-### Linux
+### Package the extension
 
 ```bash
-cd native/
-
-# Build with system Python
-./build.sh
-
-# Build matching Blender's Python ABI version
-./build.sh --blender-python
-
-# Manual version override
-BLENDER_PY_VER=3.13 ./build.sh --blender-python
+./scripts/package_zip.sh
 ```
 
-### Windows
-
-**Native build (on Windows):**
-
-```bash
-cd native/
-build.bat
-build.bat 3.13
-```
-
-Requires: Visual Studio Build Tools (C++ workload), Python 3.11/3.13 installed.
-
-**Cross-compile from Linux (MinGW-w64):**
-
-```bash
-cd native/
-./build_windows.sh
-./build_windows.sh 3.11 3.13
-```
-
-Requires: `mingw-w64` cross-compiler, `cmake`, `curl`, `tar`, `git`, `uv`.
-
-### macOS (Community)
-
-BeamNG.drive has no macOS binaries, so macOS wheels are not built or shipped by default. The build infrastructure is ready for anyone who wants them.
-
-**Prerequisites:**
-
-- **Xcode Command Line Tools:** `xcode-select --install`
-- **uv:** [Install instructions](https://docs.astral.sh/uv/getting-started/installation/)
-- **Blender** (optional, only if using `--blender-python`)
-
-```bash
-cd native/
-
-# Build for current architecture (arm64 on Apple Silicon, x86_64 on Intel)
-./build_macos.sh
-
-# Build for a specific architecture
-./build_macos.sh --arch arm64
-./build_macos.sh --arch x86_64
-
-# Build universal2 wheel (both architectures)
-./build_macos.sh --arch universal2
-
-# Build matching Blender's Python ABI version
-./build_macos.sh --blender-python
-BLENDER_PY_VER=3.13 ./build_macos.sh --blender-python --arch arm64
-```
-
-Wheels are output to `../io_beamng_dae/wheels/` and `blender_manifest.toml` is auto-updated by `update_manifest.py`.
-
-## Native Build Notes
-
-### zstd target name detection
-
-`zstd` can export under different target names depending on whether it's found via `find_package` or built via `FetchContent`. `CMakeLists.txt` detects the available target before linking.
-
-### Windows zstd resource file fix
-
-The bundled `zstd` CMake build tries to compile a resource file for the shared DLL (`libzstd-dll.rc`) and fails to locate `zstd.h`. Fixed by disabling everything except the static library before `FetchContent_MakeAvailable(zstd)`:
-
-```cmake
-set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
-```
-
-### macOS CMake additions
-
-`CMakeLists.txt` sets `CMAKE_OSX_DEPLOYMENT_TARGET` (11.0 for arm64, 10.9 for x86_64) and `CMAKE_OSX_ARCHITECTURES` for correct wheel platform tags.
+This produces a `.zip` file at the repo root that can be installed via Blender's **Install from Disk**.
 
 ## Releasing
 

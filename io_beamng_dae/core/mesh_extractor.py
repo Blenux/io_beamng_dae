@@ -9,6 +9,45 @@ import numpy as np
 from array import array
 
 
+def _material_entry(mat):
+    """Build the material dict for cdae_native: PBR values from the
+    Principled BSDF with viewport-property fallbacks, plus roundtrip
+    flags stored as custom properties."""
+    bc_r, bc_g, bc_b, bc_a = 0.8, 0.8, 0.8, 1.0
+    roughness = 0.5
+    metallic = 0.0
+    has_bsdf = False
+    if mat.use_nodes:
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            has_bsdf = True
+            bc = bsdf.inputs.get("Base Color")
+            if bc is not None:
+                dv = bc.default_value
+                bc_r, bc_g, bc_b, bc_a = float(dv[0]), float(dv[1]), float(dv[2]), float(dv[3])
+            rough = bsdf.inputs.get("Roughness")
+            if rough is not None:
+                roughness = float(rough.default_value)
+            metal = bsdf.inputs.get("Metallic")
+            if metal is not None:
+                metallic = float(metal.default_value)
+    if not has_bsdf:
+        dc = mat.diffuse_color
+        bc_r, bc_g, bc_b, bc_a = float(dc[0]), float(dc[1]), float(dc[2]), float(dc[3])
+        roughness = float(mat.roughness)
+        metallic = float(mat.metallic)
+    return {
+        "name": mat.name,
+        "flags": 3,
+        "base_color": np.array([bc_r, bc_g, bc_b, bc_a], dtype=np.float32),
+        "roughness": roughness,
+        "metallic": metallic,
+        "ior": float(mat.get("dae_ior", 1.45)),
+        "has_shininess": bool(mat.get("dae_has_shininess", False)),
+        "has_reflectivity": bool(mat.get("dae_has_reflectivity", False)),
+    }
+
+
 class MeshExtractor:
     def __init__(self, global_scale=1.0, apply_modifiers=True,
                  custom_normals=True, active_uv_only=False, dae_material_order=None):
@@ -29,38 +68,7 @@ class MeshExtractor:
                 mat = bpy.data.materials.get(mat_name)
                 if mat is None:
                     mat = bpy.data.materials.new(mat_name)
-                mat_entry = {"name": mat.name, "flags": 3}
-                bc_r, bc_g, bc_b, bc_a = 0.8, 0.8, 0.8, 1.0
-                roughness = 0.5
-                metallic = 0.0
-                has_bsdf = False
-                if mat.use_nodes:
-                    bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                    if bsdf is not None:
-                        has_bsdf = True
-                        bc = bsdf.inputs.get("Base Color")
-                        if bc is not None:
-                            dv = bc.default_value
-                            bc_r, bc_g, bc_b, bc_a = float(dv[0]), float(dv[1]), float(dv[2]), float(dv[3])
-                        rough = bsdf.inputs.get("Roughness")
-                        if rough is not None:
-                            roughness = float(rough.default_value)
-                        metal = bsdf.inputs.get("Metallic")
-                        if metal is not None:
-                            metallic = float(metal.default_value)
-                if not has_bsdf:
-                    dc = mat.diffuse_color
-                    bc_r, bc_g, bc_b, bc_a = float(dc[0]), float(dc[1]), float(dc[2]), float(dc[3])
-                    roughness = float(mat.roughness)
-                    metallic = float(mat.metallic)
-                mat_entry["base_color"] = np.array([bc_r, bc_g, bc_b, bc_a], dtype=np.float32)
-                mat_entry["roughness"] = roughness
-                mat_entry["metallic"] = metallic
-                # IOR and roundtrip flags from custom properties
-                mat_entry["ior"] = float(mat.get("dae_ior", 1.45))
-                mat_entry["has_shininess"] = bool(mat.get("dae_has_shininess", False))
-                mat_entry["has_reflectivity"] = bool(mat.get("dae_has_reflectivity", False))
-                materials.append(mat_entry)
+                materials.append(_material_entry(mat))
 
         node_entries = []
         object_entries = []
@@ -97,41 +105,8 @@ class MeshExtractor:
                 # Find existing global index or add new material
                 global_idx = mat_name_to_global.get(mat.name)
                 if global_idx is None:
-                    mat_entry = {"name": mat.name, "flags": 3}
-                    # Extract PBR from Principled BSDF, with viewport fallbacks
-                    bc_r, bc_g, bc_b, bc_a = 0.8, 0.8, 0.8, 1.0
-                    roughness = 0.5
-                    metallic = 0.0
-                    has_bsdf = False
-                    if mat.use_nodes:
-                        bsdf = mat.node_tree.nodes.get("Principled BSDF")
-                        if bsdf is not None:
-                            has_bsdf = True
-                            bc = bsdf.inputs.get("Base Color")
-                            if bc is not None:
-                                dv = bc.default_value
-                                bc_r, bc_g, bc_b, bc_a = float(dv[0]), float(dv[1]), float(dv[2]), float(dv[3])
-                            rough = bsdf.inputs.get("Roughness")
-                            if rough is not None:
-                                roughness = float(rough.default_value)
-                            metal = bsdf.inputs.get("Metallic")
-                            if metal is not None:
-                                metallic = float(metal.default_value)
-                    # Fallback to viewport properties when BSDF not available
-                    if not has_bsdf:
-                        dc = mat.diffuse_color
-                        bc_r, bc_g, bc_b, bc_a = float(dc[0]), float(dc[1]), float(dc[2]), float(dc[3])
-                        roughness = float(mat.roughness)
-                        metallic = float(mat.metallic)
-                    mat_entry["base_color"] = np.array([bc_r, bc_g, bc_b, bc_a], dtype=np.float32)
-                    mat_entry["roughness"] = roughness
-                    mat_entry["metallic"] = metallic
-                    # IOR and roundtrip flags from custom properties
-                    mat_entry["ior"] = float(mat.get("dae_ior", 1.45))
-                    mat_entry["has_shininess"] = bool(mat.get("dae_has_shininess", False))
-                    mat_entry["has_reflectivity"] = bool(mat.get("dae_has_reflectivity", False))
-                    materials.append(mat_entry)
-                    global_idx = len(materials) - 1
+                    global_idx = len(materials)
+                    materials.append(_material_entry(mat))
                     mat_name_to_global[mat.name] = global_idx
                 # Map local slot index → global material list index
                 local_to_global_mat[slot_idx] = global_idx
