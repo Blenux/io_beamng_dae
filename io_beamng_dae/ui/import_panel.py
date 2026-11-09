@@ -31,3 +31,11 @@ class ImportDAEPanel(bpy.types.Panel):
         header.label(text="Pipeline")
         if body:
             body.prop(op, "import_to_collection")
+
+        header, body = layout.panel("DAE_import_materials", default_closed=False)
+        header.label(text="Materials")
+        if body:
+            body.prop(op, "import_materials_json")
+            if op.import_materials_json:
+                body.prop(op, "skin_slots")
+                body.prop(op, "glow_map")

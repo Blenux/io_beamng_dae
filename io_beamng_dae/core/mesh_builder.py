@@ -7,7 +7,6 @@ Handles: vertices, normals, UVs, colors, materials, sharp edges/faces, node tran
 import bpy
 import os
 import numpy as np
-from array import array
 from mathutils import Matrix, Quaternion, Vector
 
 
@@ -162,15 +161,8 @@ class MeshBuilder:
             # Reshape to (total_tris, 3) and reverse winding
             tris_np = flat_idx.reshape(-1, 3)[:, [2, 1, 0]]  # (total_tris, 3)
             tri_mats_np = np.repeat(mats, tri_counts)
-
-            # Filter out-of-bounds and degenerate triangles
-            v0 = tris_np[:, 0]
-            v1 = tris_np[:, 1]
-            v2 = tris_np[:, 2]
-            valid = (v0 < vert_count) & (v1 < vert_count) & (v2 < vert_count) & \
-                    (v0 != v1) & (v1 != v2) & (v2 != v0)
-            tris_np = tris_np[valid]
-            tri_mats_np = tri_mats_np[valid]
+            tris_np, tri_mats_np = self._filter_valid_tris(
+                tris_np, tri_mats_np, vert_count)
 
         elif indices is not None:
             idx_np = np.asarray(indices, dtype=np.uint32)
@@ -181,32 +173,22 @@ class MeshBuilder:
             flat = idx_np[:n_tris * 3].astype(np.int32).reshape(-1, 3)
             tris_np = flat[:, [2, 1, 0]]  # (N, 3) reversed winding
             tri_mats_np = np.zeros(n_tris, dtype=np.int32)
-
-            # Filter out-of-bounds and degenerate triangles
-            v0 = tris_np[:, 0]
-            v1 = tris_np[:, 1]
-            v2 = tris_np[:, 2]
-            valid = (v0 < vert_count) & (v1 < vert_count) & (v2 < vert_count) & \
-                    (v0 != v1) & (v1 != v2) & (v2 != v0)
-            tris_np = tris_np[valid]
-            tri_mats_np = tri_mats_np[valid]
+            tris_np, tri_mats_np = self._filter_valid_tris(
+                tris_np, tri_mats_np, vert_count)
         else:
-            # Sequential indices: triangles can't be degenerate by index
-            tris = [(i+2, i+1, i) for i in range(0, vert_count - 2, 3)]
-            tri_mats = [0] * len(tris)
-
-            if not tris:
+            # Sequential indices: triangle list built straight from vertices
+            n_tris = vert_count // 3
+            if n_tris == 0:
                 return None
-
-            tris_np = np.array(tris, dtype=np.int32)  # (N, 3) — already reversed winding
-            tri_mats_np = np.array(tri_mats, dtype=np.int32)
+            base = np.arange(n_tris, dtype=np.int32) * 3
+            tris_np = np.column_stack([base + 2, base + 1, base])
+            tri_mats_np = np.zeros(n_tris, dtype=np.int32)
 
         if tris_np.shape[0] == 0:
             return None
 
         # Per-loop original vertex indices (for UV/normal lookup)
         corner_orig_vi = tris_np.reshape(-1)  # (N*3,)
-        loop_count = corner_orig_vi.shape[0]
 
         # Deduplicate vertices by position only; sharp edges derived from normal divergence
         has_normals = normals is not None and self.custom_normals
@@ -220,7 +202,6 @@ class MeshBuilder:
         keys_view = corner_pos.view(np.dtype((np.void, corner_pos.dtype.itemsize * corner_pos.shape[1])))
         _, unique_idx, corner_to_dedup = np.unique(keys_view, return_index=True, return_inverse=True)
         corner_to_dedup = corner_to_dedup.astype(np.int32)
-        dedup_count = len(unique_idx)
 
         dedup_orig_vi = corner_orig_vi[unique_idx]
         dedup_positions = verts_np[dedup_orig_vi] * self.global_scale
@@ -243,11 +224,20 @@ class MeshBuilder:
         if tri_count == 0:
             return None
 
-        # Create mesh with from_pydata
-        faces_list = face_verts.tolist()
-        verts_list = dedup_positions.tolist()
+        # Create mesh using foreach_set (avoids .tolist() conversion overhead)
         mesh = bpy.data.meshes.new(name)
-        mesh.from_pydata(verts_list, [], faces_list)
+
+        mesh.vertices.add(dedup_positions.shape[0])
+        mesh.loops.add(loop_count)
+        mesh.polygons.add(tri_count)
+
+        mesh.vertices.foreach_set("co", dedup_positions.reshape(-1))
+        mesh.loops.foreach_set("vertex_index", face_verts.reshape(-1))
+        mesh.polygons.foreach_set(
+            "loop_start", np.arange(tri_count, dtype=np.int32) * 3)
+        mesh.polygons.foreach_set(
+            "loop_total", np.full(tri_count, 3, dtype=np.int32))
+
         mesh.update()
 
         # Add loose edges from <lines> elements (if present)
@@ -259,70 +249,36 @@ class MeshBuilder:
         # Material indices set later in _assign_materials
         mesh_dict["_tri_mats"] = tri_mats_np
 
-        # UV0 layer
-        if uv0 is not None:
-            uv0_np = np.asarray(uv0, dtype=np.float32)
-            uv_layer = mesh.uv_layers.new(name="UV0")
-            uv_data = np.zeros((loop_count, 2), dtype=np.float32)
-            valid = corner_orig_vi < uv0_np.shape[0]
-            uv_data[valid, 0] = uv0_np[corner_orig_vi[valid], 0]
-            if self.is_dae:
-                uv_data[valid, 1] = uv0_np[corner_orig_vi[valid], 1]
-            else:
-                uv_data[valid, 1] = 1.0 - uv0_np[corner_orig_vi[valid], 1]
-            uv_layer.data.foreach_set("uv", uv_data.reshape(-1))
-            mesh.uv_layers.active = uv_layer
+        # UV layers — CDAE stores V flipped relative to DAE; extra tvert
+        # layers pass through unmodified.
+        for uv_set, uv_src in enumerate((uv0, uv1, *uv_extra)):
+            if uv_src is None:
+                continue
+            layer_name = (tvert_names[uv_set]
+                          if uv_set >= 2 and uv_set < len(tvert_names)
+                          else f"UV{uv_set}")
+            uv_layer = self._set_uv_layer(
+                mesh, layer_name, uv_src, corner_orig_vi, loop_count,
+                flip_v=not self.is_dae if uv_set < 2 else False)
+            if uv_set == 0 and uv_layer is not None:
+                mesh.uv_layers.active = uv_layer
 
-        # UV1 layer
-        if uv1 is not None:
-            uv1_np = np.asarray(uv1, dtype=np.float32)
-            uv1_layer = mesh.uv_layers.new(name="UV1")
-            uv1_data = np.zeros((loop_count, 2), dtype=np.float32)
-            valid = corner_orig_vi < uv1_np.shape[0]
-            uv1_data[valid, 0] = uv1_np[corner_orig_vi[valid], 0]
-            if self.is_dae:
-                uv1_data[valid, 1] = uv1_np[corner_orig_vi[valid], 1]
-            else:
-                uv1_data[valid, 1] = 1.0 - uv1_np[corner_orig_vi[valid], 1]
-            uv1_layer.data.foreach_set("uv", uv1_data.reshape(-1))
-
-        # Extra UV layers (2+)
-        for ei, uv_data in enumerate(uv_extra):
-            uv_set = ei + 2
-            layer_name = tvert_names[uv_set] if uv_set < len(tvert_names) else f"UV{uv_set}"
-            uv_np = np.asarray(uv_data, dtype=np.float32)
-            uv_layer = mesh.uv_layers.new(name=layer_name)
-            uv_arr = np.zeros((loop_count, 2), dtype=np.float32)
-            valid = corner_orig_vi < uv_np.shape[0]
-            uv_arr[valid, 0] = uv_np[corner_orig_vi[valid], 0]
-            uv_arr[valid, 1] = uv_np[corner_orig_vi[valid], 1]
-            uv_layer.data.foreach_set("uv", uv_arr.reshape(-1))
-
-        # Vertex colors (RGBA uint8)
-        # When color_layers is present, skip the single "Color" attribute
-        # to avoid duplicating the first layer.
+        # Vertex colors (RGBA uint8). When color_layers is present, its
+        # first layer replaces the legacy single "Color" attribute.
         color_layers = mesh_dict.get("color_layers")
         color_layer_names = mesh_dict.get("color_layer_names")
         if colors is not None and color_layers is None:
-            colors_np = np.asarray(colors, dtype=np.uint8)
-            color_layer = mesh.color_attributes.new(name="Color", type="BYTE_COLOR", domain="CORNER")
-            col_data = np.zeros((loop_count, 4), dtype=np.float32)
-            valid = corner_orig_vi < colors_np.shape[0]
-            col_data[valid] = colors_np[corner_orig_vi[valid]].astype(np.float32) / 255.0
-            color_layer.data.foreach_set("color", col_data.reshape(-1))
-            mesh.color_attributes.active_color = color_layer
-
-        # Create all color layers from color_layers with original names.
-        if color_layers is not None and color_layer_names is not None:
-            for li, (cl_data_arr, cl_name) in enumerate(zip(color_layers, color_layer_names)):
-                cl_np = np.asarray(cl_data_arr, dtype=np.uint8)
-                cl_attr = mesh.color_attributes.new(name=cl_name, type="BYTE_COLOR", domain="CORNER")
-                cl_data = np.zeros((loop_count, 4), dtype=np.float32)
-                valid = corner_orig_vi < cl_np.shape[0]
-                cl_data[valid] = cl_np[corner_orig_vi[valid]].astype(np.float32) / 255.0
-                cl_attr.data.foreach_set("color", cl_data.reshape(-1))
-                if li == 0:
-                    mesh.color_attributes.active_color = cl_attr
+            attr = self._set_color_attr(mesh, "Color", colors,
+                                        corner_orig_vi, loop_count)
+            if attr is not None:
+                mesh.color_attributes.active_color = attr
+        elif color_layers is not None and color_layer_names is not None:
+            for li, (cl_arr, cl_name) in enumerate(
+                    zip(color_layers, color_layer_names)):
+                attr = self._set_color_attr(mesh, cl_name, cl_arr,
+                                            corner_orig_vi, loop_count)
+                if li == 0 and attr is not None:
+                    mesh.color_attributes.active_color = attr
 
         # Normals + sharp edge derivation from normal divergence
         if has_normals:
@@ -340,28 +296,69 @@ class MeshBuilder:
             sharp_faces = is_flat.astype(np.int8)
 
             # Set all faces smooth; sharp_edge/sharp_face control shading
-            mesh.polygons.foreach_set("use_smooth", array('b', [1] * tri_count))
+            mesh.polygons.foreach_set(
+                "use_smooth", np.ones(tri_count, dtype=bool))
 
             # Set sharp_face before normals_split_custom_set
             if "sharp_face" not in mesh.attributes:
                 sharp_attr = mesh.attributes.new(name="sharp_face", type='BOOLEAN', domain='FACE')
             else:
                 sharp_attr = mesh.attributes["sharp_face"]
-            sharp_attr.data.foreach_set("value", array('b', sharp_faces.tolist()))
+            sharp_attr.data.foreach_set("value", sharp_faces)
 
             mesh.update()
 
             # Set custom corner normals via normals_split_custom_set
             try:
-                mesh.normals_split_custom_set(loop_normal_flat.tolist())
+                mesh.normals_split_custom_set(loop_normal_flat)
             except Exception:
                 pass
 
         else:
-            mesh.polygons.foreach_set("use_smooth", array('b', [1] * tri_count))
+            mesh.polygons.foreach_set(
+                "use_smooth", np.ones(tri_count, dtype=bool))
 
         mesh.update()
         return mesh
+
+    @staticmethod
+    def _filter_valid_tris(tris_np, tri_mats_np, vert_count):
+        """Drop out-of-bounds and degenerate triangles."""
+        v0 = tris_np[:, 0]
+        v1 = tris_np[:, 1]
+        v2 = tris_np[:, 2]
+        valid = (v0 < vert_count) & (v1 < vert_count) & (v2 < vert_count) & \
+                (v0 != v1) & (v1 != v2) & (v2 != v0)
+        return tris_np[valid], tri_mats_np[valid]
+
+    @staticmethod
+    def _set_uv_layer(mesh, name, uv_src, corner_orig_vi, loop_count, flip_v):
+        """Create a UV layer and fill per-loop UVs from corner vertex indices."""
+        uv_np = np.asarray(uv_src, dtype=np.float32)
+        uv_layer = mesh.uv_layers.new(name=name)
+        if uv_layer is None:
+            return None
+        data = np.zeros((loop_count, 2), dtype=np.float32)
+        valid = corner_orig_vi < uv_np.shape[0]
+        data[valid] = uv_np[corner_orig_vi[valid]]
+        if flip_v:
+            data[valid, 1] = 1.0 - data[valid, 1]
+        uv_layer.data.foreach_set("uv", data.reshape(-1))
+        return uv_layer
+
+    @staticmethod
+    def _set_color_attr(mesh, name, colors, corner_orig_vi, loop_count):
+        """Create a BYTE_COLOR corner attribute from RGBA uint8 vertex colors."""
+        colors_np = np.asarray(colors, dtype=np.uint8)
+        attr = mesh.color_attributes.new(
+            name=name, type="BYTE_COLOR", domain="CORNER")
+        if attr is None:
+            return None
+        data = np.zeros((loop_count, 4), dtype=np.float32)
+        valid = corner_orig_vi < colors_np.shape[0]
+        data[valid] = colors_np[corner_orig_vi[valid]].astype(np.float32) / 255.0
+        attr.data.foreach_set("color", data.reshape(-1))
+        return attr
 
     def _create_lines_only_mesh(self, name, mesh_dict, line_indices, line_verts):
         """Create a Blender mesh with only vertices and loose edges from <lines> data."""
@@ -371,14 +368,15 @@ class MeshBuilder:
         if line_idx_np.shape[0] == 0 or line_vts_np.shape[0] == 0:
             return None
 
-        # All line vertices become mesh vertices
-        verts_list = (line_vts_np * self.global_scale).tolist()
-        # Build edges from line index pairs
-        edges_list = [[int(p[0]), int(p[1])] for p in line_idx_np
-                      if int(p[0]) != int(p[1])]
+        edges_np = line_idx_np[line_idx_np[:, 0] != line_idx_np[:, 1]]
+        verts_np = line_vts_np * self.global_scale
 
         mesh = bpy.data.meshes.new(name)
-        mesh.from_pydata(verts_list, edges_list, [])
+        mesh.vertices.add(verts_np.shape[0])
+        mesh.vertices.foreach_set("co", verts_np.reshape(-1))
+        if edges_np.shape[0] > 0:
+            mesh.edges.add(edges_np.shape[0])
+            mesh.edges.foreach_set("vertices", edges_np.reshape(-1))
         mesh.update()
 
         # Store material info for _assign_materials
@@ -486,6 +484,7 @@ class MeshBuilder:
                     mesh.materials.append(mat)
                 else:
                     mesh.materials.append(None)
+            self._record_uv_names(mesh)
             return
 
         prims_np = np.asarray(primitives, dtype=np.uint32)
@@ -510,8 +509,20 @@ class MeshBuilder:
             remapped = np.zeros(len(tri_mats), dtype=np.int32)
             for g_idx, l_idx in global_to_local.items():
                 remapped[tri_mats == g_idx] = l_idx
-            mesh.polygons.foreach_set("material_index", array('i', remapped.tolist()))
+            mesh.polygons.foreach_set("material_index", remapped)
             mesh.update()
+
+        self._record_uv_names(mesh)
+
+    @staticmethod
+    def _record_uv_names(mesh):
+        """Record the positional UV layer names on each material — the
+        shader graph resolves BeamNG's index-based *MapUseUV against
+        these when the layer isn't named UV0/UV1 (tvert names)."""
+        uv_names = [l.name for l in mesh.uv_layers]
+        for mat in mesh.materials:
+            if mat is not None and "bng_uv_names" not in mat:
+                mat["bng_uv_names"] = uv_names
 
     def _compute_world_matrices(self, nodes):
         """Compute world transforms per node by composing parent transforms."""

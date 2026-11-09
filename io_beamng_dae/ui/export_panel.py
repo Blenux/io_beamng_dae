@@ -36,3 +36,10 @@ class ExportDAEPanel(bpy.types.Panel):
         header.label(text="Transform")
         if body:
             body.prop(op, "global_scale")
+
+        header, body = layout.panel("DAE_export_materials", default_closed=True)
+        header.label(text="Materials JSON")
+        if body:
+            body.prop(op, "export_materials_json")
+            if op.export_materials_json:
+                body.prop(op, "vehicle_name")
