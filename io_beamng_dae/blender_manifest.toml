@@ -9,3 +9,6 @@ blender_version_min = "5.0.1"
 license = ["SPDX:GPL-3.0-or-later"]
 tags = ["Import-Export", "Mesh"]
 website = "https://github.com/Blenux/io_beamng_dae"
+
+[permissions]
+files = "Read BeamNG.drive game content (vehicle zips, materials.json, textures) to resolve materials and meshes"
